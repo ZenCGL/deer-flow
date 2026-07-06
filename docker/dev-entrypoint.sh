@@ -64,25 +64,31 @@ if [ -n "$EXTRAS_FLAGS" ]; then
     echo "[startup] uv extras:$EXTRAS_FLAGS"
 fi
 
-# Keep runtime-owned files out of uvicorn's reload watcher. The directory must
-# exist before uvicorn starts so watchfiles treats it as an excluded directory,
-# not as a plain glob pattern.
+# Keep runtime-owned files out of uvicorn's reload watcher. Each excluded path
+# must exist before uvicorn starts so watchfiles treats it as an excluded
+# directory, not as a plain glob pattern — on Python 3.12, globbing an absolute
+# pattern raises NotImplementedError and crashes startup (#3459 / #3454). That
+# means `sandbox` must be created here too, not just `.deer-flow`.
 : "${DEER_FLOW_HOME:=/app/backend/.deer-flow}"
 export DEER_FLOW_HOME
-mkdir -p "$DEER_FLOW_HOME" /app/backend/.deer-flow
+mkdir -p "$DEER_FLOW_HOME" /app/backend/.deer-flow /app/backend/sandbox
 
 # ── Sync dependencies (with self-heal) ──────────────────────────────────────
 
 cd /app/backend
 
 # `--all-packages` propagates extras into workspace members (PR #2584).
+# `--extra redis` is always installed because docker-compose-dev defaults the
+# stream bridge to Redis (DEER_FLOW_STREAM_BRIDGE_REDIS_URL); redis is an
+# optional extra elsewhere. It is kept out of EXTRAS_FLAGS so the --print-extras
+# contract (UV_EXTRAS-derived flags only) stays unchanged.
 # `$EXTRAS_FLAGS` intentionally unquoted so each `--extra X` becomes its own arg.
 # shellcheck disable=SC2086 # word-splitting is intentional here
-if ! uv sync --all-packages $EXTRAS_FLAGS; then
+if ! uv sync --all-packages --extra redis $EXTRAS_FLAGS; then
     echo "[startup] uv sync failed; recreating .venv and retrying once"
     uv venv --allow-existing .venv
     # shellcheck disable=SC2086
-    uv sync --all-packages $EXTRAS_FLAGS
+    uv sync --all-packages --extra redis $EXTRAS_FLAGS
 fi
 
 # ── Hand off to uvicorn ─────────────────────────────────────────────────────

@@ -85,11 +85,13 @@ def test_appconfig_descriptions_retain_original_field_documentation():
     hover documents what the field is *and* why a restart is needed."""
     descriptions = {
         "log_level": "debug/info/warning/error",
+        "logging": "Structured logging and request trace correlation settings.",
         "database": "memory, sqlite, or postgres",
         "sandbox": "Sandbox provider",
         "run_events": "memory for dev",
         "checkpointer": "state-persistence checkpointer",
         "stream_bridge": "Stream bridge",
+        "channel_connections": "IM channel connection",
     }
     for field_name, expected_substring in descriptions.items():
         description = AppConfig.model_fields[field_name].description or ""

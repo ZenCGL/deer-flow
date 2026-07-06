@@ -7,7 +7,9 @@ Run from repo root:
 from __future__ import annotations
 
 import yaml
-from wizard.providers import LLM_PROVIDERS, SEARCH_PROVIDERS, WEB_FETCH_PROVIDERS, LLMProvider
+from wizard import ui as wizard_ui
+from wizard.providers import LLM_PROVIDERS, SEARCH_PROVIDERS, WEB_FETCH_PROVIDERS, LLMProvider, with_thinking_support
+from wizard.steps import channels as channels_step
 from wizard.steps import llm as llm_step
 from wizard.steps import search as search_step
 from wizard.writer import (
@@ -327,6 +329,70 @@ class TestBuildMinimalConfig:
         assert model["when_thinking_enabled"]["extra_body"]["thinking"]["type"] == "enabled"
         assert model["when_thinking_disabled"]["extra_body"]["thinking"]["type"] == "disabled"
 
+    def test_can_enable_selected_channel_connections(self):
+        content = build_minimal_config(
+            provider_use="langchain_openai:ChatOpenAI",
+            model_name="gpt-4o",
+            display_name="OpenAI",
+            api_key_field="api_key",
+            env_var="OPENAI_API_KEY",
+            channel_connection_providers=["feishu", "slack"],
+        )
+
+        data = yaml.safe_load(content)
+        channel_connections = data["channel_connections"]
+
+        assert channel_connections["enabled"] is True
+        assert channel_connections["feishu"]["enabled"] is True
+        assert channel_connections["slack"]["enabled"] is True
+        assert channel_connections["telegram"]["enabled"] is False
+        assert channel_connections["discord"]["enabled"] is False
+        assert channel_connections["dingtalk"]["enabled"] is False
+        assert channel_connections["wechat"]["enabled"] is False
+        assert channel_connections["wecom"]["enabled"] is False
+
+    def test_channel_connections_disabled_when_no_channels_selected(self):
+        content = build_minimal_config(
+            provider_use="langchain_openai:ChatOpenAI",
+            model_name="gpt-4o",
+            display_name="OpenAI",
+            api_key_field="api_key",
+            env_var="OPENAI_API_KEY",
+            channel_connection_providers=[],
+        )
+
+        data = yaml.safe_load(content)
+        channel_connections = data["channel_connections"]
+
+        assert channel_connections["enabled"] is False
+        assert all(not config["enabled"] for provider, config in channel_connections.items() if provider != "enabled")
+
+
+class TestThinkingSupport:
+    def test_other_provider_requests_thinking_prompt(self):
+        other = next(p for p in LLM_PROVIDERS if p.name == "other")
+        assert other.ask_thinking_support is True
+
+    def test_with_thinking_support_enabled_wires_toggles(self):
+        other = next(p for p in LLM_PROVIDERS if p.name == "other")
+        original = dict(other.extra_config)
+
+        updated = with_thinking_support(other, True)
+
+        assert updated.extra_config["supports_thinking"] is True
+        assert updated.extra_config["when_thinking_enabled"]["extra_body"]["thinking"]["type"] == "enabled"
+        assert updated.extra_config["when_thinking_disabled"]["extra_body"]["thinking"]["type"] == "disabled"
+        # The shared provider singleton must not be mutated.
+        assert other.extra_config == original
+
+    def test_with_thinking_support_disabled_marks_unsupported(self):
+        other = next(p for p in LLM_PROVIDERS if p.name == "other")
+
+        updated = with_thinking_support(other, False)
+
+        assert updated.extra_config["supports_thinking"] is False
+        assert "when_thinking_enabled" not in updated.extra_config
+
 
 class TestLLMStep:
     def test_model_selection_defaults_to_provider_default_model(self, monkeypatch):
@@ -382,6 +448,100 @@ class TestLLMStep:
         result = llm_step.run_llm_step()
 
         assert result.base_url == "https://gateway.example/v1"
+
+    def test_other_gateway_prompts_and_enables_thinking(self, monkeypatch):
+        provider = LLMProvider(
+            name="other",
+            display_name="Other OpenAI-compatible",
+            description="Custom gateway",
+            use="langchain_openai:ChatOpenAI",
+            models=["gpt-4o"],
+            default_model="gpt-4o",
+            env_var="OPENAI_API_KEY",
+            package="langchain-openai",
+            base_url_prompt="Base URL",
+            model_prompt="Model name",
+            ask_thinking_support=True,
+        )
+
+        monkeypatch.setattr(llm_step, "LLM_PROVIDERS", [provider])
+        monkeypatch.setattr(llm_step, "ask_choice", lambda *_args, **_kwargs: 0)
+        monkeypatch.setattr(llm_step, "ask_text", lambda *_args, **_kwargs: "custom-thinking-model")
+        monkeypatch.setattr(llm_step, "ask_secret", lambda _prompt: "key")
+        monkeypatch.setattr(llm_step, "ask_yes_no", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(llm_step, "print_header", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(llm_step, "print_info", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(llm_step, "print_success", lambda *_args, **_kwargs: None)
+
+        result = llm_step.run_llm_step()
+
+        assert result.model_name == "custom-thinking-model"
+        assert result.provider.extra_config["supports_thinking"] is True
+        assert result.provider.extra_config["when_thinking_enabled"]["extra_body"]["thinking"]["type"] == "enabled"
+
+    def test_other_gateway_declined_thinking_marks_unsupported(self, monkeypatch):
+        provider = LLMProvider(
+            name="other",
+            display_name="Other OpenAI-compatible",
+            description="Custom gateway",
+            use="langchain_openai:ChatOpenAI",
+            models=["gpt-4o"],
+            default_model="gpt-4o",
+            env_var="OPENAI_API_KEY",
+            package="langchain-openai",
+            base_url_prompt="Base URL",
+            model_prompt="Model name",
+            ask_thinking_support=True,
+        )
+
+        monkeypatch.setattr(llm_step, "LLM_PROVIDERS", [provider])
+        monkeypatch.setattr(llm_step, "ask_choice", lambda *_args, **_kwargs: 0)
+        monkeypatch.setattr(llm_step, "ask_text", lambda *_args, **_kwargs: "plain-model")
+        monkeypatch.setattr(llm_step, "ask_secret", lambda _prompt: "key")
+        monkeypatch.setattr(llm_step, "ask_yes_no", lambda *_args, **_kwargs: False)
+        monkeypatch.setattr(llm_step, "print_header", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(llm_step, "print_info", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(llm_step, "print_success", lambda *_args, **_kwargs: None)
+
+        result = llm_step.run_llm_step()
+
+        assert result.provider.extra_config["supports_thinking"] is False
+        assert "when_thinking_enabled" not in result.provider.extra_config
+
+
+class TestChannelsStep:
+    def test_returns_selected_channel_keys(self, monkeypatch):
+        monkeypatch.setattr(channels_step, "print_header", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(channels_step, "print_info", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(channels_step, "print_success", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(channels_step, "ask_multi_choice", lambda *_args, **_kwargs: [0, 3, 6])
+
+        result = channels_step.run_channels_step()
+
+        assert result.enabled_providers == ["telegram", "feishu", "wecom"]
+
+    def test_empty_selection_disables_channel_connections(self, monkeypatch):
+        monkeypatch.setattr(channels_step, "print_header", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(channels_step, "print_info", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(channels_step, "print_success", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(channels_step, "ask_multi_choice", lambda *_args, **_kwargs: [])
+
+        result = channels_step.run_channels_step()
+
+        assert result.enabled_providers == []
+
+
+class TestWizardUi:
+    def test_multi_choice_blank_requires_input_without_default(self, monkeypatch):
+        answers = iter(["", "2"])
+        monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+        assert wizard_ui.ask_multi_choice("Pick", ["First", "Second"], default=None) == [1]
+
+    def test_multi_choice_blank_accepts_empty_default(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+        assert wizard_ui.ask_multi_choice("Pick", ["First", "Second"], default=[]) == []
 
 
 # ---------------------------------------------------------------------------
