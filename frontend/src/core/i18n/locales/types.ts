@@ -126,6 +126,7 @@ export interface Translations {
     followupConfirmReplace: string;
     suggestionPlaceholderRequired: string;
     goalCommandDescription: string;
+    compactCommandDescription: string;
     goalLabel: string;
     goalContinuing: string;
     goalContinuationTooltip: string;
@@ -134,6 +135,9 @@ export interface Translations {
     goalNone: string;
     goalActive: string;
     goalFailed: string;
+    compactSuccess: string;
+    compactSkipped: string;
+    compactFailed: string;
     suggestions: {
       suggestion: string;
       prompt: string;
@@ -362,6 +366,10 @@ export interface Translations {
     title: string;
     open: string;
     close: string;
+    delete: string;
+    deleteConfirm: string;
+    deleteSuccess: string;
+    deleteFailed: string;
     addToConversation: string;
     askInSideChat: string;
     reference: string;
@@ -430,6 +438,17 @@ export interface Translations {
     clickToViewContent: string;
     writeTodos: string;
     skillInstallTooltip: string;
+  };
+
+  humanInput: {
+    answered: string;
+    pending: string;
+    readOnly: string;
+    otherLabel: string;
+    otherPlaceholder: string;
+    submit: string;
+    emptyError: string;
+    answeredValue: (value: string) => string;
   };
 
   // Uploads

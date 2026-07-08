@@ -151,6 +151,8 @@ export const enUS: Translations = {
     suggestionPlaceholderRequired:
       "Replace the suggestion placeholder before sending.",
     goalCommandDescription: "Set, show, or clear an active goal",
+    compactCommandDescription:
+      "Compact earlier context while keeping the full chat visible",
     goalLabel: "Goal",
     goalContinuing: "Continuing {count}/{max}",
     goalContinuationTooltip:
@@ -160,6 +162,10 @@ export const enUS: Translations = {
     goalNone: "No active goal.",
     goalActive: "Active goal: {goal}",
     goalFailed: "Goal command failed.",
+    compactSuccess:
+      "Earlier context compacted. The full chat remains visible; future model calls will use the summary and recent messages.",
+    compactSkipped: "The current context does not need compaction yet.",
+    compactFailed: "Context compaction failed.",
     suggestions: [
       {
         suggestion: "Write",
@@ -452,6 +458,11 @@ export const enUS: Translations = {
     title: "Side chat",
     open: "Open side chat",
     close: "Close side chat",
+    delete: "Delete side chat",
+    deleteConfirm:
+      "Are you sure you want to delete this side chat? This action cannot be undone. To simply hide it, use the side chat toggle in the header instead.",
+    deleteSuccess: "Side chat deleted",
+    deleteFailed: "Failed to delete side chat.",
     addToConversation: "Add to conversation",
     askInSideChat: "Ask in side chat",
     reference: "Reference",
@@ -531,6 +542,17 @@ export const enUS: Translations = {
     clickToViewContent: "Click to view file content",
     writeTodos: "Update to-do list",
     skillInstallTooltip: "Install skill and make it available to DeerFlow",
+  },
+
+  humanInput: {
+    answered: "Answered",
+    pending: "Sending...",
+    readOnly: "Read only",
+    otherLabel: "Other answer",
+    otherPlaceholder: "Type another answer...",
+    submit: "Submit",
+    emptyError: "Enter an answer before submitting.",
+    answeredValue: (value: string) => `Answered: ${value}`,
   },
 
   // Subtasks

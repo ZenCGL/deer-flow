@@ -1,6 +1,7 @@
 "use client";
 
 import type { Message } from "@langchain/langgraph-sdk";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ChatStatus } from "ai";
 import {
   CheckIcon,
@@ -23,7 +24,6 @@ import {
   useState,
   type ComponentProps,
   type KeyboardEvent,
-  type RefObject,
 } from "react";
 import { toast } from "sonner";
 
@@ -73,6 +73,8 @@ import {
 import { useSkills } from "@/core/skills/hooks";
 import { useSuggestionsConfig } from "@/core/suggestions/hooks";
 import type { AgentThreadContext, GoalState } from "@/core/threads";
+import { compactThreadContext } from "@/core/threads/api";
+import { threadTokenUsageQueryKey } from "@/core/threads/token-usage";
 import { textOfMessage } from "@/core/threads/utils";
 import {
   formatUploadSize,
@@ -252,6 +254,7 @@ export function InputBox({
   onStop?: () => void;
 }) {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const { models } = useModels();
@@ -265,6 +268,7 @@ export function InputBox({
   const promptRootRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const goalRequestStateRef = useRef(createGoalRequestState());
+  const compactRequestStateRef = useRef(createGoalRequestState());
   const promptHistoryIndexRef = useRef<number | null>(null);
   const promptHistoryDraftRef = useRef("");
 
@@ -293,8 +297,13 @@ export function InputBox({
         description: t.inputBox.goalCommandDescription,
         kind: "builtin",
       },
+      {
+        name: "compact",
+        description: t.inputBox.compactCommandDescription,
+        kind: "builtin",
+      },
     ],
-    [t.inputBox.goalCommandDescription],
+    [t.inputBox.compactCommandDescription, t.inputBox.goalCommandDescription],
   );
 
   const reportUploadLimitViolations = useCallback(
@@ -429,7 +438,11 @@ export function InputBox({
 
   useEffect(() => {
     const goalRequestState = goalRequestStateRef.current;
-    return () => abortGoalRequest(goalRequestState);
+    const compactRequestState = compactRequestStateRef.current;
+    return () => {
+      abortGoalRequest(goalRequestState);
+      abortGoalRequest(compactRequestState);
+    };
   }, [threadId]);
 
   useEffect(() => {
@@ -602,6 +615,66 @@ export function InputBox({
     ],
   );
 
+  const handleCompactCommand = useCallback(async (): Promise<void> => {
+    if (isWelcomeMode) {
+      textInput.setInput("");
+      toast.info(t.inputBox.compactSkipped);
+      return;
+    }
+    const request = beginGoalRequest(compactRequestStateRef.current, threadId);
+    const signal = request.controller.signal;
+    try {
+      const result = await compactThreadContext(threadId, {
+        signal,
+        agentName:
+          typeof context.agent_name === "string" ? context.agent_name : null,
+      });
+      if (
+        !isCurrentGoalRequest(compactRequestStateRef.current, request, threadId)
+      ) {
+        return;
+      }
+      textInput.setInput("");
+      promptHistoryIndexRef.current = null;
+      promptHistoryDraftRef.current = "";
+      setFollowups([]);
+      setFollowupsHidden(false);
+      setFollowupsLoading(false);
+
+      void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+      void queryClient.invalidateQueries({
+        queryKey: threadTokenUsageQueryKey(threadId),
+      });
+
+      if (result.compacted) {
+        toast.success(t.inputBox.compactSuccess);
+      } else {
+        toast.info(t.inputBox.compactSkipped);
+      }
+    } catch (error) {
+      if (
+        isAbortError(error) ||
+        !isCurrentGoalRequest(compactRequestStateRef.current, request, threadId)
+      ) {
+        return;
+      }
+      toast.error(
+        error instanceof Error ? error.message : t.inputBox.compactFailed,
+      );
+    } finally {
+      finishGoalRequest(compactRequestStateRef.current, request);
+    }
+  }, [
+    context.agent_name,
+    queryClient,
+    t.inputBox.compactFailed,
+    t.inputBox.compactSkipped,
+    t.inputBox.compactSuccess,
+    isWelcomeMode,
+    textInput,
+    threadId,
+  ]);
+
   const submitThreadMessage = useCallback(
     (message: PromptInputMessage) => {
       const files = message.files.flatMap((file) =>
@@ -614,7 +687,7 @@ export function InputBox({
       }
       const placeholder = findSuggestionTemplatePlaceholder(message.text);
       if (placeholder) {
-        toast.error(t.inputBox.suggestionPlaceholderRequired);
+        toast.warning(t.inputBox.suggestionPlaceholderRequired);
         requestAnimationFrame(() => {
           const textarea = textareaRef.current;
           if (!textarea) {
@@ -714,6 +787,9 @@ export function InputBox({
         }
         return;
       }
+      if (submitAction.kind === "compact") {
+        return handleCompactCommand();
+      }
       if (submitAction.kind === "stop") {
         onStop?.();
         return;
@@ -724,6 +800,7 @@ export function InputBox({
       return submitThreadMessage(message);
     },
     [
+      handleCompactCommand,
       handleGoalCommand,
       onStop,
       status,
@@ -1069,6 +1146,18 @@ export function InputBox({
     threadId,
   ]);
 
+  const onSelectPlaceholder = useCallback((newText: string) => {
+    const placeholder = findSuggestionTemplatePlaceholder(newText);
+    if (placeholder) {
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(placeholder.start, placeholder.end);
+      });
+    }
+  }, []);
+
   return (
     <div
       ref={promptRootRef}
@@ -1157,7 +1246,7 @@ export function InputBox({
       )}
       <PromptInput
         className={cn(
-          "bg-background/85 rounded-2xl backdrop-blur-sm transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-2xl",
+          "bg-background/85 relative z-10 rounded-2xl backdrop-blur-sm transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-2xl",
           className,
         )}
         disabled={disabled}
@@ -1559,16 +1648,16 @@ export function InputBox({
             />
           </PromptInputTools>
         </PromptInputFooter>
-        {!isWelcomeMode && (
-          <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
-        )}
       </PromptInput>
+      {!isWelcomeMode && (
+        <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
+      )}
 
       {isWelcomeMode &&
         searchParams.get("mode") !== "skill" &&
         !showSkillSuggestions && (
           <div className="flex items-center justify-center pt-2">
-            <SuggestionList textareaRef={textareaRef} />
+            <SuggestionList onSelectPlaceholder={onSelectPlaceholder} />
           </div>
         )}
 
@@ -1598,9 +1687,9 @@ export function InputBox({
 }
 
 function SuggestionList({
-  textareaRef,
+  onSelectPlaceholder,
 }: {
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  onSelectPlaceholder: (newText: string) => void;
 }) {
   const { t } = useI18n();
   const { textInput } = usePromptInputController();
@@ -1608,16 +1697,9 @@ function SuggestionList({
     (prompt: string | undefined) => {
       if (!prompt) return;
       textInput.setInput(prompt);
-      requestAnimationFrame(() => {
-        const textarea = textareaRef.current;
-        const placeholder = findSuggestionTemplatePlaceholder(prompt);
-        if (textarea && placeholder) {
-          textarea.focus();
-          textarea.setSelectionRange(placeholder.start, placeholder.end);
-        }
-      });
+      onSelectPlaceholder(prompt);
     },
-    [textareaRef, textInput],
+    [textInput, onSelectPlaceholder],
   );
   return (
     <Suggestions className="min-h-16 w-full max-w-full justify-center px-4 sm:w-fit sm:px-0">
